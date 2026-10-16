@@ -159,24 +159,21 @@ public static partial class OpenAIApi
         client.ResolveModel(request.Model);
     }
 
-    internal static async Task<ChatCompletionResponse> CreateChatCompletionAsync(ChatRequest request, GeminiClient client, CancellationToken ct)
+    internal static async Task<ChatCompletionResponse> CreateChatCompletionAsync(ChatRequest request, GeminiClient client, GeminiChat chat, CancellationToken ct)
     {
         Validate(request, client);
 
-        var prompt = ChatMessages.BuildPrompt(request.Messages);
-
-        if (prompt.Length == 0) throw new ApiException(400, "no valid content in messages");
-
-        if (request.HasToolsEnabled) prompt = ToolBridge.OpenAIPrompt(request.Tools, request.ToolChoiceMode, request.ForcedTool, prompt);
+        Func<string, string>? wrap = request.HasToolsEnabled ? p => ToolBridge.OpenAIPrompt(request.Tools, request.ToolChoiceMode, request.ForcedTool, p) : null;
 
         var options = new GenerateOptions
         {
             Model         = request.Model,
             ThinkingLevel = ThinkingLevel(request.ReasoningEffort),
-            InputFiles    = ChatMessages.ToInputFiles(request.Messages.SelectMany(m => m.Attachments)),
         };
 
-        var response     = await client.GenerateContentAsync(prompt, options, ct);
+        var sent         = await chat.SendAsync(new GeminiChat.Request(request.Model, "", request.Messages, wrap, options), ct);
+        var response     = sent.Response;
+        var prompt       = sent.Prompt;
         var message      = new ResponseMessage();
         var finishReason = "stop";
 
@@ -237,7 +234,7 @@ public static partial class OpenAIApi
         Function = new ToolCallFunction { Name = name, Arguments = arguments },
     };
 
-    private static async Task ChatCompletionsAsync(HttpContext context, GeminiClient client)
+    private static async Task ChatCompletionsAsync(HttpContext context, GeminiClient client, GeminiChat chat)
     {
         ChatRequest request;
 
@@ -258,7 +255,7 @@ public static partial class OpenAIApi
         {
             try
             {
-                await ApiHttp.WriteJsonAsync(context, 200, await CreateChatCompletionAsync(request, client, deadline.Token));
+                await ApiHttp.WriteJsonAsync(context, 200, await CreateChatCompletionAsync(request, client, chat, deadline.Token));
             }
             catch (Exception e) when (e is ApiException or GeminiException or HttpRequestException)
             {
@@ -274,7 +271,7 @@ public static partial class OpenAIApi
 
         try
         {
-            var response = await CreateChatCompletionAsync(request, client, ct);
+            var response = await CreateChatCompletionAsync(request, client, chat, ct);
             await StreamResponseAsync(context, response, ct);
         }
         catch (Exception e) when (e is ApiException or GeminiException or HttpRequestException)

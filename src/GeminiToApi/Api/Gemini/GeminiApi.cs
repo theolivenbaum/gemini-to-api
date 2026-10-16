@@ -74,7 +74,7 @@ public static partial class GeminiApi
         return Error(status, e.Message, type);
     }
 
-    private static async Task ModelActionAsync(string spec, HttpContext context, GeminiClient client)
+    private static async Task ModelActionAsync(string spec, HttpContext context, GeminiClient client, GeminiChat chat)
     {
         var colon  = spec.LastIndexOf(':');
         var model  = colon < 0 ? spec : spec[..colon];
@@ -83,10 +83,10 @@ public static partial class GeminiApi
         switch (action)
         {
             case "generateContent":
-                await GenerateContentAsync(model, context, client);
+                await GenerateContentAsync(model, context, client, chat);
                 break;
             case "streamGenerateContent":
-                await StreamGenerateContentAsync(model, context, client);
+                await StreamGenerateContentAsync(model, context, client, chat);
                 break;
             case "predictLongRunning":
                 await (await PredictLongRunningAsync(model, context, client)).ExecuteAsync(context);
@@ -99,7 +99,7 @@ public static partial class GeminiApi
 
     // ---------------------------------------------------------------- generateContent
 
-    internal sealed record GenerateRequest(string Prompt, List<InputFile> Files, List<ToolBridge.Tool> Tools);
+    internal sealed record GenerateRequest(string System, List<ChatMessage> Messages, List<ToolBridge.Tool> Tools);
 
     private static JsonElement Either(JsonElement obj, string snake, string camel)
     {
@@ -109,30 +109,18 @@ public static partial class GeminiApi
 
     internal static GenerateRequest ParseRequest(JsonElement body)
     {
-        var builder = new StringBuilder();
-        var system  = Either(body, "system_instruction", "systemInstruction");
+        var systemElement = Either(body, "system_instruction", "systemInstruction");
+        var system        = systemElement.ValueKind == JsonValueKind.Object
+            ? string.Join(" ", systemElement.Array("parts").Select(p => p.Str("text")).Where(t => t.Length > 0)).Trim()
+            : "";
 
-        if (system.ValueKind == JsonValueKind.Object)
+        var messages = new List<ChatMessage>();
+
+        foreach (var content in body.Array("contents"))
         {
-            var text = string.Join(" ", system.Array("parts").Select(p => p.Str("text")).Where(t => t.Length > 0)).Trim();
-
-            if (text.Length > 0) builder.Append("System: ").Append(text).Append("\n\n");
-        }
-
-        var files       = new List<InputFile>();
-        var contents    = body.Array("contents").ToList();
-        var isMultiTurn = contents.Count > 1;
-
-        foreach (var content in contents)
-        {
-            var rolePrefix = !isMultiTurn ? "" : content.Str("role").Trim().ToLowerInvariant() switch
-            {
-                "model" or "assistant" => "Model: ",
-                "system"               => "System: ",
-                _                      => "User: ",
-            };
-
-            var index = 0;
+            var texts       = new List<string>();
+            var attachments = new List<Attachment>();
+            var index       = 0;
 
             foreach (var part in content.Array("parts"))
             {
@@ -140,32 +128,36 @@ public static partial class GeminiApi
 
                 var text = part.Str("text");
 
-                if (text.Length > 0)
-                {
-                    builder.Append(rolePrefix).Append(text).Append('\n');
-                    rolePrefix = "";
-                }
+                if (text.Length > 0) texts.Add(text);
+
+                var call = Either(part, "function_call", "functionCall");
+
+                if (call.ValueKind == JsonValueKind.Object) texts.Add($"[Call Tool: {call.Str("name")} with Input: {RawOrEmpty(call.Prop("args"))}]");
+
+                var result = Either(part, "function_response", "functionResponse");
+
+                if (result.ValueKind == JsonValueKind.Object) texts.Add($"[Tool Result for {result.Str("name")}]: {RawOrEmpty(result.Prop("response"))}");
 
                 var inline = Either(part, "inline_data", "inlineData");
                 var data   = inline.Str("data");
 
                 if (data.Length == 0) continue;
 
-                if (!ChatMessages.TryDecodeBase64(data, out var bytes)) throw new ApiException(400, "decode inline_data: invalid base64 data");
+                if (!ChatMessages.TryDecodeBase64(data, out _)) throw new ApiException(400, "decode inline_data: invalid base64 data");
 
                 var mimeType = inline.Str("mimeType");
 
                 if (mimeType.Length == 0) mimeType = inline.Str("mime_type");
 
-                files.Add(new InputFile($"inline_{index}{MediaUrls.ExtensionForMimeType(mimeType)}", mimeType, bytes));
+                attachments.Add(new Attachment($"inline_{index}{MediaUrls.ExtensionForMimeType(mimeType)}", mimeType, data));
             }
+
+            var role = content.Str("role").Trim().ToLowerInvariant() is { Length: > 0 } r ? r : "user";
+
+            messages.Add(new ChatMessage(role, string.Join("\n", texts), attachments));
         }
 
-        var prompt = builder.ToString().Trim();
-
-        if (prompt.Length == 0 && files.Count == 0) throw new ApiException(400, "empty content");
-
-        if (prompt.Length == 0) prompt = $"[{files.Count} file(s) attached]";
+        if (messages.All(m => m.Content.Trim().Length == 0 && m.Attachments.Count == 0)) throw new ApiException(400, "empty content");
 
         var tools = new List<ToolBridge.Tool>();
 
@@ -182,10 +174,10 @@ public static partial class GeminiApi
             }
         }
 
-        if (tools.Count > 0) prompt = ToolBridge.GeminiPrompt(tools, prompt);
-
-        return new GenerateRequest(prompt, files, tools);
+        return new GenerateRequest(system, messages, tools);
     }
+
+    private static string RawOrEmpty(JsonElement value) => value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? "{}" : value.GetRawText();
 
     private static JsonObject Candidate(JsonArray parts, string? finishReason)
     {
@@ -205,11 +197,11 @@ public static partial class GeminiApi
         return response;
     }
 
-    internal static async Task<JsonObject> GenerateAsync(string model, GenerateRequest request, GeminiClient client, CancellationToken ct)
+    internal static async Task<JsonObject> GenerateAsync(string model, GenerateRequest request, GeminiClient client, GeminiChat chat, CancellationToken ct)
     {
         if (Music.IsMusicModel(model))
         {
-            var music    = await client.GenerateMusicAsync(request.Prompt, model, new MusicConfig(), ct);
+            var music    = await client.GenerateMusicAsync(GeminiChat.FormatPrompt(request.Messages, request.System), model, new MusicConfig(), ct);
             var mimeType = string.IsNullOrEmpty(music.Audio.MimeType) ? "audio/mpeg" : music.Audio.MimeType;
             var parts    = new JsonArray();
 
@@ -220,7 +212,10 @@ public static partial class GeminiApi
             return Response(Candidate(parts, "STOP"));
         }
 
-        var response     = await client.GenerateContentAsync(request.Prompt, new GenerateOptions { Model = model, InputFiles = request.Files }, ct);
+        Func<string, string>? wrap = request.Tools.Count > 0 ? p => ToolBridge.GeminiPrompt(request.Tools, p) : null;
+
+        var sent         = await chat.SendAsync(new GeminiChat.Request(model, request.System, request.Messages, wrap, new GenerateOptions { Model = model }), ct);
+        var response     = sent.Response;
         var result       = new JsonArray();
         var finishReason = "STOP";
 
@@ -290,7 +285,7 @@ public static partial class GeminiApi
         }
     }
 
-    private static async Task GenerateContentAsync(string model, HttpContext context, GeminiClient client)
+    private static async Task GenerateContentAsync(string model, HttpContext context, GeminiClient client, GeminiChat chat)
     {
         if (await ReadGenerateRequestAsync(model, context, client) is not { } request) return;
 
@@ -298,7 +293,7 @@ public static partial class GeminiApi
 
         try
         {
-            await ApiHttp.WriteJsonAsync(context, 200, await GenerateAsync(model, request, client, deadline.Token));
+            await ApiHttp.WriteJsonAsync(context, 200, await GenerateAsync(model, request, client, chat, deadline.Token));
         }
         catch (Exception e) when (e is ApiException or GeminiException or HttpRequestException)
         {
@@ -307,7 +302,7 @@ public static partial class GeminiApi
     }
 
     /// <summary>NDJSON by default; server-sent events with <c>?alt=sse</c> (what google-genai uses).</summary>
-    private static async Task StreamGenerateContentAsync(string model, HttpContext context, GeminiClient client)
+    private static async Task StreamGenerateContentAsync(string model, HttpContext context, GeminiClient client, GeminiChat chat)
     {
         if (await ReadGenerateRequestAsync(model, context, client) is not { } request) return;
 
@@ -341,7 +336,7 @@ public static partial class GeminiApi
 
         try
         {
-            var response = await GenerateAsync(model, request, client, ct);
+            var response = await GenerateAsync(model, request, client, chat, ct);
             var parts    = (JsonArray)response["candidates"]![0]!["content"]!["parts"]!;
 
             if (parts.Any(p => p?["functionCall"] is not null))

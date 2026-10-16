@@ -102,19 +102,16 @@ public static class ClaudeApi
 
     internal sealed record MessageResult(string Id, string Model, List<JsonObject> Content, string StopReason, int InputTokens, int OutputTokens, List<CanvasFile>? Canvases);
 
-    internal static async Task<MessageResult> GenerateAsync(MessageRequest request, GeminiClient client, CancellationToken ct)
+    internal static async Task<MessageResult> GenerateAsync(MessageRequest request, GeminiClient client, GeminiChat chat, CancellationToken ct)
     {
         ChatMessages.Validate(request.Messages);
         client.ResolveModel(request.Model);
 
-        var prompt = ChatMessages.BuildPrompt(request.Messages, request.System);
+        Func<string, string>? wrap = request.Tools.Count > 0 ? p => ToolBridge.ClaudePrompt(request.Tools, p) : null;
 
-        if (prompt.Length == 0) throw new ApiException(400, "no valid content in messages");
-
-        if (request.Tools.Count > 0) prompt = ToolBridge.ClaudePrompt(request.Tools, prompt);
-
-        var options  = new GenerateOptions { Model = request.Model, InputFiles = ChatMessages.ToInputFiles(request.Messages.SelectMany(m => m.Attachments)) };
-        var response = await client.GenerateContentAsync(prompt, options, ct);
+        var sent     = await chat.SendAsync(new GeminiChat.Request(request.Model, request.System, request.Messages, wrap, new GenerateOptions { Model = request.Model }), ct);
+        var response = sent.Response;
+        var prompt   = sent.Prompt;
 
         var content    = new List<JsonObject>();
         var stopReason = "end_turn";
@@ -169,7 +166,7 @@ public static class ClaudeApi
         return message;
     }
 
-    private static async Task MessagesAsync(HttpContext context, GeminiClient client)
+    private static async Task MessagesAsync(HttpContext context, GeminiClient client, GeminiChat chat)
     {
         MessageRequest request;
 
@@ -192,7 +189,7 @@ public static class ClaudeApi
         {
             try
             {
-                var result = await GenerateAsync(request, client, ct);
+                var result = await GenerateAsync(request, client, chat, ct);
                 await ApiHttp.WriteJsonAsync(context, 200, MessageJson(result, withContent: true));
             }
             catch (Exception e) when (e is ApiException or GeminiException or HttpRequestException)
@@ -207,7 +204,7 @@ public static class ClaudeApi
 
         try
         {
-            var result = await GenerateAsync(request, client, ct);
+            var result = await GenerateAsync(request, client, chat, ct);
             await StreamAsync(context, result, ct);
         }
         catch (Exception e) when (e is ApiException or GeminiException or HttpRequestException)

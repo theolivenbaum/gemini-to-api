@@ -19,6 +19,7 @@ internal static class GeminiResponseParser
         var canvases       = new List<Canvas>();
         var conversationId = "";
         var choiceId       = "";
+        var responseId     = "";
         var metaCid        = "";
 
         foreach (var rawLine in text.Split('\n'))
@@ -46,6 +47,9 @@ internal static class GeminiResponseParser
                 var id = Video.ConversationIdFromPayload(payload);
 
                 if (id.Length > 0) conversationId = id;
+
+                // payload[1] is either "c_…" or ["c_…", "r_…"]; the second form also names the reply.
+                if (payload.At(1) is JsonArray ids && ids.At(1).Str() is { Length: > 0 } rid) responseId = rid;
 
                 // Newer replies (e.g. the Videos tool acknowledgement) stream a turn as numbered-field
                 // updates, [null,["c_…","r_…"],{"7":["text"],"44":true}], instead of candidates at index 4.
@@ -111,6 +115,7 @@ internal static class GeminiResponseParser
                 Audios         = audios,
                 ConversationId = conversationId.Length > 0 ? conversationId : metaCid,
                 ChoiceId       = choiceId,
+                ResponseId     = responseId,
             };
         }
 

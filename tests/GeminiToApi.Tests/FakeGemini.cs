@@ -16,6 +16,12 @@ internal sealed class FakeGemini : HttpMessageHandler
 
         /// <summary>The decoded StreamGenerate inner payload.</summary>
         public JsonArray Inner => JsonNode.Parse(JsonNode.Parse(Form("f.req"))![1]!.GetValue<string>())!.AsArray();
+
+        public string Prompt => Inner[0]![0]!.GetValue<string>();
+
+        /// <summary>inner[2][0..2]: the conversation this request continues ("" for a new one).</summary>
+        public (string Cid, string Rid, string Rcid) Conversation
+            => (Inner[2]![0]!.GetValue<string>(), Inner[2]![1]!.GetValue<string>(), Inner[2]![2]!.GetValue<string>());
     }
 
     public ConcurrentQueue<Captured> Requests { get; } = new();
@@ -25,9 +31,12 @@ internal sealed class FakeGemini : HttpMessageHandler
 
     public Func<Captured, HttpResponseMessage?>? Override { get; set; }
 
-    public static string StreamReply(string text, string conversationId = "c_test")
+    private int _turn;
+
+    /// <summary>Gemini's reply frame: payload[1] = [conversation id, response id], candidate[0] = choice id.</summary>
+    public static string StreamReply(string text, string conversationId = "c_test", int turn = 1)
     {
-        var payload = Json(new object?[] { null, conversationId, null, null, new object?[] { new object?[] { "rc_test", new object?[] { text } } } });
+        var payload = Json(new object?[] { null, new object?[] { conversationId, "r_" + turn }, null, null, new object?[] { new object?[] { "rc_" + turn, new object?[] { text } } } });
         var frame   = Json(new object?[] { new object?[] { "wrb.fr", null, payload } });
 
         return ")]}'\n\n" + frame.Length + "\n" + frame + "\n";
@@ -45,7 +54,7 @@ internal sealed class FakeGemini : HttpMessageHandler
 
         if (request.RequestUri!.AbsolutePath.EndsWith("/StreamGenerate", StringComparison.Ordinal))
         {
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(StreamReply(Reply), Encoding.UTF8) };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(StreamReply(Reply, turn: Interlocked.Increment(ref _turn)), Encoding.UTF8) };
         }
 
         return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("not found") };

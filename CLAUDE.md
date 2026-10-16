@@ -33,7 +33,7 @@ src/GeminiToApi/            # the tool (Microsoft.NET.Sdk.Web, PackAsTool)
     GeminiResponseParser.cs # StreamGenerate response parsing, media extraction
     Canvas.cs Music.cs Video*.cs DeepResearch.cs
   Api/                      # the three public API surfaces + shared helpers
-    OpenAI/ Claude/ Gemini/ Common/
+    OpenAI/ Claude/ Gemini/ Common/   # Common/GeminiChat.cs: conversation continuity for all three
   Hosting/                  # Kestrel host wiring: CORS, rate limit, docs, health, 404
   Login/                    # Playwright-based cookie capture (`login` command)
   Resources/openapi.json    # served at /openapi.json, rendered by Scalar at /docs

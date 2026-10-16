@@ -60,6 +60,12 @@ public sealed class MusicConfig
     public string Genre  { get; set; } = "";
 }
 
+/// <summary>
+/// Identifies a turn of an existing Gemini Web conversation: sending it as the request metadata
+/// (inner[2]) continues that conversation instead of starting a new one.
+/// </summary>
+public sealed record ConversationRef(string ConversationId, string ResponseId, string ChoiceId);
+
 /// <summary>Per-request generation options (the Go <c>GenerateConfig</c>).</summary>
 public sealed class GenerateOptions
 {
@@ -70,6 +76,9 @@ public sealed class GenerateOptions
     public VideoAspectRatio?  Video                   { get; set; }
     public bool               Canvas                  { get; set; }
     public MusicConfig?       Music                   { get; set; }
+
+    /// <summary>Continue this conversation (after the given reply) instead of starting a new one.</summary>
+    public ConversationRef?   Continue                { get; set; }
 }
 
 /// <summary>A parsed Gemini Web reply.</summary>

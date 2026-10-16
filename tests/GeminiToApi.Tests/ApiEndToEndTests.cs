@@ -205,7 +205,7 @@ public sealed class ApiEndToEndTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var inner = _gemini.Requests.Single(r => r.Url.AbsolutePath.EndsWith("StreamGenerate")).Inner;
-        Assert.Equal("[\"User: What is this?\",0,null,[[[\"/contrib_service/file-id\"],\"image_1.png\"]],null,null,0]", inner[0]!.ToJsonString());
+        Assert.Equal("[\"What is this?\",0,null,[[[\"/contrib_service/file-id\"],\"image_1.png\"]],null,null,0]", inner[0]!.ToJsonString());
     }
 
     private static HttpResponseMessage Upload(FakeGemini.Captured request)
@@ -292,7 +292,7 @@ public sealed class ApiEndToEndTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("Hello from Gemini", json["candidates"]![0]!["content"]!["parts"]![0]!["text"]!.GetValue<string>());
         Assert.Equal("STOP", json["candidates"]![0]!["finishReason"]!.GetValue<string>());
-        Assert.Equal("System: Rules\n\nWrite a poem", _gemini.Requests.Single().Inner[0]![0]!.GetValue<string>());
+        Assert.Equal("System: Rules\n\nUser: Write a poem", _gemini.Requests.Single().Prompt);
     }
 
     [Fact]
@@ -346,5 +346,144 @@ public sealed class ApiEndToEndTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("/gemini/v1beta/models/veo/operations/abc")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("/gemini/v1beta/files/abc123:download?alt=media")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await http.PostAsync("/gemini/v1beta/models/veo-3:predictLongRunning", Body("""{"instances":[]}"""))).StatusCode);
+    }
+
+    // ---------------------------------------------------------------- conversation continuity
+
+    [Fact]
+    public async Task OpenAIFollowUpContinuesTheGeminiConversation()
+    {
+        var http = await StartAsync();
+
+        await http.PostAsync("/openai/v1/chat/completions", Body("""{"model":"gemini-pro","messages":[{"role":"user","content":"What's 1+1?"}]}"""));
+
+        // The client echoes the reply back (here reformatted) and adds a new question.
+        var response = await http.PostAsync("/openai/v1/chat/completions", Body("""
+            {"model":"gemini-pro","messages":[
+              {"role":"user","content":"What's 1+1?"},
+              {"role":"assistant","content":"Echoed differently by the client"},
+              {"role":"user","content":"And times 3?"}]}
+            """));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var sent = _gemini.Requests.Where(r => r.Url.AbsolutePath.EndsWith("StreamGenerate")).ToList();
+
+        Assert.Equal(("", "", ""), sent[0].Conversation);
+        Assert.Equal("What's 1+1?", sent[0].Prompt);
+        Assert.Equal(("c_test", "r_1", "rc_1"), sent[1].Conversation);
+        Assert.Equal("And times 3?", sent[1].Prompt);
+
+        // A third turn continues from the second reply.
+        await http.PostAsync("/openai/v1/chat/completions", Body("""
+            {"model":"gemini-pro","messages":[
+              {"role":"user","content":"What's 1+1?"},{"role":"assistant","content":"Echoed differently by the client"},
+              {"role":"user","content":"And times 3?"},{"role":"assistant","content":"6"},
+              {"role":"user","content":"Thanks"}]}
+            """));
+
+        var third = _gemini.Requests.Where(r => r.Url.AbsolutePath.EndsWith("StreamGenerate")).Last();
+        Assert.Equal(("c_test", "r_2", "rc_2"), third.Conversation);
+        Assert.Equal("Thanks", third.Prompt);
+    }
+
+    [Fact]
+    public async Task UnknownHistoryStartsANewConversationWithTheWholeTranscript()
+    {
+        var http = await StartAsync();
+
+        await http.PostAsync("/openai/v1/chat/completions", Body("""
+            {"model":"gemini-pro","messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"},{"role":"user","content":"Bye"}]}
+            """));
+
+        var sent = _gemini.Requests.Single();
+        Assert.Equal(("", "", ""), sent.Conversation);
+        Assert.Equal("User: Hi\nModel: Hello\nUser: Bye", sent.Prompt);
+    }
+
+    [Fact]
+    public async Task FailedContinuationFallsBackToANewConversation()
+    {
+        var http = await StartAsync();
+
+        await http.PostAsync("/openai/v1/chat/completions", Body("""{"model":"gemini-pro","messages":[{"role":"user","content":"Hi"}]}"""));
+
+        // Gemini rejects the follow-up (e.g. the conversation was deleted).
+        _gemini.Override = r => r.Url.AbsolutePath.EndsWith("StreamGenerate") && r.Conversation.Cid.Length > 0
+            ? new HttpResponseMessage(HttpStatusCode.BadRequest)
+            : null;
+
+        var response = await http.PostAsync("/openai/v1/chat/completions", Body("""
+            {"model":"gemini-pro","messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"},{"role":"user","content":"Again"}]}
+            """));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var last = _gemini.Requests.Last();
+        Assert.Equal(("", "", ""), last.Conversation);
+        Assert.Equal("User: Hi\nModel: Hello\nUser: Again", last.Prompt);
+    }
+
+    [Fact]
+    public async Task ContinuationCanBeDisabled()
+    {
+        var http = await StartAsync(c => c.Gemini.ContinueConversations = false);
+
+        await http.PostAsync("/openai/v1/chat/completions", Body("""{"model":"gemini-pro","messages":[{"role":"user","content":"Hi"}]}"""));
+        await http.PostAsync("/openai/v1/chat/completions", Body("""
+            {"model":"gemini-pro","messages":[{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"},{"role":"user","content":"Again"}]}
+            """));
+
+        Assert.Equal(("", "", ""), _gemini.Requests.Last().Conversation);
+    }
+
+    [Fact]
+    public async Task ClaudeToolLoopContinuesTheConversation()
+    {
+        var http = await StartAsync();
+
+        _gemini.Reply = """{"status":"tool_use","tool_calls":[{"id":"toolu_1","name":"read_file","input":{"path":"a.txt"}}]}""";
+
+        const string tools = """[{"name":"read_file","description":"Read a file","input_schema":{"type":"object"}}]""";
+
+        await http.PostAsync("/claude/v1/messages", Body($$$"""
+            {"model":"gemini-pro","max_tokens":100,"system":"You are a coding agent","tools":{{{tools}}},
+             "messages":[{"role":"user","content":"Summarize a.txt"}]}
+            """));
+
+        _gemini.Reply = """{"status":"text","content":"It says hello."}""";
+
+        var json = await Json(await http.PostAsync("/claude/v1/messages", Body($$$"""
+            {"model":"gemini-pro","max_tokens":100,"system":"You are a coding agent","tools":{{{tools}}},
+             "messages":[
+               {"role":"user","content":"Summarize a.txt"},
+               {"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"read_file","input":{"path":"a.txt"}}]},
+               {"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"hello"}]}]}
+            """)));
+
+        Assert.Equal("It says hello.", json["content"]![0]!["text"]!.GetValue<string>());
+
+        var second = _gemini.Requests.Last();
+
+        Assert.Equal(("c_test", "r_1", "rc_1"), second.Conversation);
+        Assert.Contains("[Tool Result for ID toolu_1]: hello", second.Prompt);
+        Assert.Contains("- name: read_file", second.Prompt);           // the tool bridge is re-sent
+        Assert.DoesNotContain("You are a coding agent", second.Prompt); // the system prompt is not
+        Assert.DoesNotContain("Summarize a.txt", second.Prompt);        // nor the earlier turns
+    }
+
+    [Fact]
+    public async Task GeminiContentsFollowUpContinuesTheConversation()
+    {
+        var http = await StartAsync();
+
+        await http.PostAsync("/gemini/v1beta/models/gemini-flash:generateContent", Body("""{"contents":[{"role":"user","parts":[{"text":"Name a color"}]}]}"""));
+        await http.PostAsync("/gemini/v1beta/models/gemini-flash:generateContent", Body("""
+            {"contents":[{"role":"user","parts":[{"text":"Name a color"}]},{"role":"model","parts":[{"text":"Blue"}]},{"role":"user","parts":[{"text":"Another"}]}]}
+            """));
+
+        var second = _gemini.Requests.Last();
+        Assert.Equal(("c_test", "r_1", "rc_1"), second.Conversation);
+        Assert.Equal("Another", second.Prompt);
     }
 }

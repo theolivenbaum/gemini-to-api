@@ -52,8 +52,11 @@ Status legend: `[x]` done, `[ ]` open, `[~]` partial.
 - [x] Music generation (`-music` suffix, audio/speech), conversation polling
 - [x] Video generation jobs (single active job, retention, MP4 duration)
 - [x] Deep research (plan → sub-questions → synthesis), sync + streaming
-- [ ] `ChatSession` / `StartChat` (multi-turn with conversation metadata) — not
-      used by any API route in the Go server; port only if a route needs it
+- [x] Conversation continuity (replaces Go's unused `ChatSession`): follow-up
+      requests continue the Gemini conversation that answered their history
+      (`Api/Common/GeminiChat.cs`, `GEMINI_CONTINUE_CONVERSATIONS`), sending
+      only the new messages; falls back to a new conversation on failure
+- [ ] Persist the conversation map across restarts (in memory today)
 
 ## 3. API surfaces
 
@@ -127,6 +130,12 @@ Status legend: `[x]` done, `[ ]` open, `[~]` partial.
 - [ ] Real token counting instead of `chars / 4`
 
 ## Behaviour changes vs. the Go server
+
+- Follow-up requests continue the same Gemini conversation instead of opening
+  a new one per request with the whole transcript (Go never continued).
+- A request that is a single user message without a system prompt is sent as
+  typed (`Hello`), not as `User: Hello`; the Gemini API's single-content prompt
+  with a system instruction now reads `System: …\n\nUser: …`.
 
 - Default bind address is `localhost` (Go listened on all interfaces). Set
   `HOST=0.0.0.0` (or `--host 0.0.0.0`) for Docker / LAN access.
