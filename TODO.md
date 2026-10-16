@@ -5,11 +5,15 @@ Status legend: `[x]` done, `[ ]` open, `[~]` partial.
 ## 0. Repository setup
 
 - [x] Move the Go implementation to `.reference/`
-- [x] Disable the Go CI/CD workflows (`.github/workflows/*.yml.disabled`)
+- [x] Disable the Go CI/CD workflows and move them with the rest of `.github/`
+      into `.reference/.github/workflows/*.yml.disabled`
 - [x] `CLAUDE.md` / `TODO.md`
 - [x] Solution (`GeminiToApi.slnx`), tool project, test project
-- [ ] New CI workflow: build + test on PRs, `dotnet pack` + `dotnet nuget push`
-      on release tags (needs a `NUGET_API_KEY` secret)
+- [x] Azure DevOps pipeline `.devops/build-nuget.yml` (mirrors neko): test, build,
+      pack and push the tool to NuGet on `main`, CalVer `yy.M.<build>`. Needs the
+      pipeline created in Azure DevOps and the `nuget-curiosity-org` service
+      connection (or the `nugetServiceConnection` variable changed)
+- [ ] PR validation (build + test on pull requests)
 - [ ] Optional: Dockerfile for the .NET build
 
 ## 1. Host (`internal/server`, `cmd/server`, `internal/commons/configs`)

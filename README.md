@@ -120,6 +120,9 @@ dotnet run --project src/GeminiToApi -- --help
 dotnet pack src/GeminiToApi -c Release -o artifacts
 ```
 
+Every push to `main` is published to NuGet by the Azure DevOps pipeline in
+[`.devops/build-nuget.yml`](.devops/build-nuget.yml) as version `yy.M.<build>`.
+
 See [CLAUDE.md](CLAUDE.md) for the code layout and porting rules, and
 [TODO.md](TODO.md) for the port's status.
 

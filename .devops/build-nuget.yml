@@ -1,0 +1,85 @@
+# Builds, tests and publishes the GeminiToApi .NET tool to NuGet on every push to main.
+# Mirrors curiosity-ai/neko's .devops/build-nuget.yml (CalVer yy.M.<build>).
+variables:
+  project: '$(Build.SourcesDirectory)/src/GeminiToApi/GeminiToApi.csproj'
+  tests: '$(Build.SourcesDirectory)/tests/GeminiToApi.Tests/GeminiToApi.Tests.csproj'
+  buildConfiguration: 'Release'
+  targetVersion: yy.M.$(build.buildId)
+  # Azure DevOps NuGet service connection holding the nuget.org API key.
+  nugetServiceConnection: 'nuget-curiosity-org'
+
+trigger:
+- main
+
+# Windows agent: the Release pack ships Playwright's Windows driver for the `login` command.
+pool:
+  vmImage: 'windows-latest'
+
+steps:
+# NuGet 7.6+ is required to push with an API-key service connection.
+# The hosted image's cached NuGet is older, so install a newer one.
+- task: NuGetToolInstaller@1
+  displayName: 'Install NuGet >= 7.6'
+  inputs:
+    versionSpec: '>=7.6.0'
+    checkLatest: true
+
+- task: PowerShell@2
+  displayName: 'Create CalVer Version'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $dottedDate = (Get-Date).ToString("yy.M")
+      $buildID = $($env:BUILD_BUILDID)
+      $modBuildID = [int]$buildID % 65536  # ensure fits in int16
+      $newTargetVersion = "$dottedDate.$modBuildID"
+      Write-Host "##vso[task.setvariable variable=targetVersion;]$newTargetVersion"
+      Write-Host "Updated targetVersion to '$newTargetVersion'"
+
+- task: UseDotNet@2
+  displayName: 'Use .NET 10.0 SDK'
+  inputs:
+    packageType: sdk
+    version: 10.x
+    includePreviewVersions: false
+    installationPath: $(Agent.ToolsDirectory)\dotnet
+
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'restore'
+    projects: |
+      $(project)
+      $(tests)
+  displayName: 'restore nuget'
+
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'test'
+    projects: '$(tests)'
+    arguments: '-c $(buildConfiguration)'
+  displayName: 'run tests'
+
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'build'
+    projects: '$(project)'
+    arguments: '-c $(buildConfiguration) /p:Version=$(targetVersion)'
+  displayName: 'build'
+
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'pack'
+    packagesToPack: '$(project)'
+    versioningScheme: 'off'
+    configuration: '$(buildConfiguration)'
+    buildProperties: 'Version="$(targetVersion)"'
+    nobuild: true
+  displayName: 'pack tool'
+
+- task: NuGetCommand@2
+  inputs:
+    command: 'push'
+    packagesToPush: '$(Build.ArtifactStagingDirectory)/*.nupkg'
+    nuGetFeedType: 'external'
+    publishFeedCredentials: '$(nugetServiceConnection)'
+  displayName: 'push nuget'

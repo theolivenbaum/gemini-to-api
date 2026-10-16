@@ -21,7 +21,8 @@ gemini-to-api            # start the server on http://localhost:4981
 
 ```
 .reference/                 # the original Go implementation - READ ONLY, porting reference
-.github/workflows/*.disabled# the Go CI/CD pipelines, disabled on purpose
+  .github/workflows/*.disabled  # its GitHub Actions pipelines, moved here and disabled on purpose
+.devops/build-nuget.yml     # Azure DevOps: test, pack and push the tool to NuGet (CalVer yy.M.<build>)
 src/GeminiToApi/            # the tool (Microsoft.NET.Sdk.Web, PackAsTool)
   Program.cs                # entry point: CLI parsing, `serve` / `login` commands
   Configuration/            # AppConfig (env vars, .env files, CLI flags), DotEnv
@@ -85,6 +86,11 @@ dotnet test  GeminiToApi.slnx
 dotnet pack  src/GeminiToApi -c Release -o artifacts
 dotnet tool install -g GeminiToApi --add-source ./artifacts   # local smoke test
 ```
+
+Publishing: `.devops/build-nuget.yml` (same shape as curiosity-ai/neko's) runs on
+every push to `main` on a Windows agent, versions the package `yy.M.<buildId>`,
+runs the tests, packs and pushes to NuGet through the `nuget-curiosity-org`
+service connection. Don't hand-edit `<Version>` for releases; the pipeline sets it.
 
 Run locally against a real account:
 
