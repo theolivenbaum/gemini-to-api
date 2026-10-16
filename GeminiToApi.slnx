@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GeminiToApi/GeminiToApi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GeminiToApi.Tests/GeminiToApi.Tests.csproj" />
+  </Folder>
+</Solution>
