@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>GeminiToApi</RootNamespace>
+    <AssemblyName>gemini-to-api</AssemblyName>
+
+    <!-- Distributed as a .NET global tool: dotnet tool install -g GeminiToApi -->
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>gemini-to-api</ToolCommandName>
+    <PackageId>GeminiToApi</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Local OpenAI-, Claude- and Gemini-compatible API server backed by the Gemini web app and your browser session.</Description>
+    <PackageTags>gemini;openai;anthropic;claude;llm;api;proxy;dotnet-tool</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- NU5111: Playwright's helper .ps1 scripts are data, not NuGet install scripts. -->
+    <NoWarn>$(NoWarn);NU5111</NoWarn>
+
+    <!-- The `login` command drives the browser through Playwright's Node driver. Browser
+         auto-detection is Windows-only for now, so Release packs ship only the Windows driver
+         (~90 MB instead of ~470 MB for every platform). Debug builds keep the host's driver. -->
+    <PlaywrightPlatform Condition="'$(PlaywrightPlatform)' == '' AND '$(Configuration)' == 'Release'">win</PlaywrightPlatform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\openapi.json" LogicalName="GeminiToApi.openapi.json" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <InternalsVisibleTo Include="GeminiToApi.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Playwright" Version="1.63.0" />
+  </ItemGroup>
+
+</Project>
