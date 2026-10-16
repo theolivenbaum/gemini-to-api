@@ -54,6 +54,8 @@ public static class Server
         builder.Services.AddSingleton(config.Gemini);
         builder.Services.AddSingleton<GeminiClient>(sp => new GeminiClient(config.Gemini, sp.GetRequiredService<ILogger<GeminiClient>>()));
         builder.Services.AddSingleton<DeepResearch>();
+        builder.Services.AddSingleton(new Api.Common.ConversationStore());
+        builder.Services.AddSingleton<Api.Common.GeminiChat>();
         builder.Services.AddHostedService<GeminiSessionService>();
 
         builder.Services.AddCors(o => o.AddDefaultPolicy(p => p

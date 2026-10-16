@@ -87,6 +87,15 @@ with `api_version="v1beta"`. Any API key works unless you set `API_KEY`.
 /openai/v1/models`); `gemini-advanced` is an alias for the Pro model. Append
 `-canvas` to a model for Gemini Canvas files, `-music` for music generation.
 
+**Conversations.** OpenAI/Claude/Gemini clients resend the whole history on
+every request. The server remembers which Gemini conversation answered each
+history (in memory, 12 h), so a follow-up — the same history plus the reply and
+new messages — continues that Gemini conversation and sends only the new
+messages. A history it has not seen (another server, a restart, an edited earlier
+message) starts a new conversation with the full transcript; so does a follow-up
+Gemini refuses. The system prompt and model are part of the history: changing
+either starts a new conversation.
+
 Gemini Web returns whole answers, so streaming responses are replayed in small
 chunks. Tool calling is emulated by prompting for JSON.
 
@@ -101,6 +110,7 @@ Environment variables (or a `.env` file, or the matching `--flag`; flags win):
 | `GEMINI_REFRESH_INTERVAL` | `1440` | Cookie rotation interval in minutes (minimum 10) |
 | `GEMINI_MAX_RETRIES` | `3` | Retries for failed Gemini calls |
 | `GEMINI_TEMPORARY` | `false` | Don't keep conversations in Gemini's history |
+| `GEMINI_CONTINUE_CONVERSATIONS` | `true` | Continue the Gemini conversation a follow-up request belongs to (see below) |
 | `PORT` / `HOST` | `4981` / `localhost` | Listen address (`HOST=0.0.0.0` for Docker/LAN) |
 | `API_KEY` | — | If set, clients must send it (`Authorization: Bearer`, `x-api-key`, `x-goog-api-key` or `?key=`) |
 | `RATE_LIMIT_ENABLED` | `false` | Per-IP fixed-window rate limit |

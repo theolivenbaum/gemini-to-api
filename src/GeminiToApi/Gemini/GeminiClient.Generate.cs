@@ -50,6 +50,8 @@ public sealed partial class GeminiClient
 
         inner[80] = thinkingLevel;
 
+        if (options.Continue is { } conversation) GeminiProtocol.ApplyConversation(inner, conversation);
+
         var webTool = options.Video is not null || music is not null || canvas;
         var headers = GeminiProtocol.BuildModelHeaders(model, requestId, GenerationId, thinkingLevel, webTool);
 

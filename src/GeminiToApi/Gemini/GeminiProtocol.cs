@@ -145,6 +145,21 @@ internal static class GeminiProtocol
         return inner;
     }
 
+    /// <summary>
+    /// Points the request at an existing conversation: inner[2] is [conversation id, response id,
+    /// choice id, …], the same metadata the web client sends for a follow-up message.
+    /// </summary>
+    public static void ApplyConversation(JsonArray inner, ConversationRef conversation)
+    {
+        var metadata = inner[2] as JsonArray ?? Jspb.Of("", "", "", null, null, null, null, null, null, "");
+
+        metadata[0] = conversation.ConversationId;
+        metadata[1] = conversation.ResponseId;
+        metadata[2] = conversation.ChoiceId;
+
+        if (inner[2] is null) inner[2] = metadata;
+    }
+
     /// <summary>Extends a StreamGenerate payload to the current web client's layout; tool modes go on top.</summary>
     public static void ApplyWebClientInner(JsonArray inner)
     {

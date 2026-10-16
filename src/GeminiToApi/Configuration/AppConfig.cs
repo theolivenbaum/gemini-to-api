@@ -10,6 +10,9 @@ public sealed class GeminiOptions
     public int    MaxRetries      { get; set; } = AppConfig.DEFAULT_MAX_RETRIES;
     public bool   Temporary       { get; set; }
 
+    /// <summary>Continue the Gemini conversation a follow-up request belongs to instead of starting a new one.</summary>
+    public bool   ContinueConversations { get; set; } = true;
+
     /// <summary>Folder for the rotated <c>__Secure-1PSIDTS</c> cache.</summary>
     public string CookieCacheDirectory { get; set; } = "";
 }
@@ -121,6 +124,7 @@ public sealed class AppConfig
         gemini.Secure1PSIDTS = CookieHeader.Value(gemini.Cookies, "__Secure-1PSIDTS");
         gemini.MaxRetries    = GetInt("GEMINI_MAX_RETRIES", DEFAULT_MAX_RETRIES);
         gemini.Temporary     = GetBool("GEMINI_TEMPORARY", false);
+        gemini.ContinueConversations = GetBool("GEMINI_CONTINUE_CONVERSATIONS", true);
 
         gemini.RefreshInterval = GetInt("GEMINI_REFRESH_INTERVAL", DEFAULT_REFRESH_INTERVAL);
 
